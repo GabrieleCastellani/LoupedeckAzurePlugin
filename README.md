@@ -2,9 +2,10 @@
 This plugin allow control of a Virtual Machine on Azure with Loupedeck
 
 ## Installation
-Download the latest version from releases
-Install the plugin 
-create a text file under C:\Users\[your user]\.loupedeck\azure\azure.json
+- Download the latest version from releases
+- Install the plugin 
+- create a text file under C:\Users\[your user]\.loupedeck\azure\azure.json
+
 content:
 ```
 {
