@@ -17,129 +17,134 @@
     using System.Xml.Linq;
     using Loupedeck.LoupedeckAzurePlugin.Events;
 
+    /// <summary>
+    /// Represents a command for controlling Azure Virtual Machines (VMs) from the Loupedeck plugin.
+    /// Allows starting and stopping VMs and reflects their current state.
+    /// </summary>
     public class AzureVmAction : AzureBaseCommand
     {
-        private readonly List<string> _vmIds = new List<string>();
-     
-
+        /// <summary>
+        /// Initializes a new instance of the <see cref="AzureVmAction"/> class.
+        /// Sets up the possible VM states for the command.
+        /// </summary>
         public AzureVmAction()
             : base("Virtual Machines")
         {
             try
             {
-                // Authenticate using service principal credentials
-
                 this.AddState("NotFound", "Not fetched");
                 this.AddState("Off", "Vm is turned off");
                 this.AddState("On", "Vm is turned on");
-                this.AddState("Changhing", "Vm is changing");
-                
-
-
-
-
-
+                this.AddState("Changing", "Vm is changing");
             }
             catch (Exception ex)
             {
-                PluginLog.Error($"Error {ex.Message}");
+                PluginLog.Error($"[AzureVmAction.ctor] Error initializing states: {ex}");
             }
         }
 
-        protected override Boolean EntitiyFilter(String entity_id) => entity_id.Contains("providers/Microsoft.Compute/virtualMachines");
+        /// <summary>
+        /// Filters entities to only include Azure Virtual Machines.
+        /// </summary>
+        /// <param name="entityId">The resource ID of the entity.</param>
+        /// <returns>True if the entity is a VM; otherwise, false.</returns>
+        protected override Boolean EntityFilter(String entityId)
+            => entityId?.Contains("providers/Microsoft.Compute/virtualMachines") == true;
 
-
-
-        // Method executed when the user presses the "Accendi VM" button
-        protected override void RunCommand(string entity_id)
-
+        /// <summary>
+        /// Executes the command to start or stop the VM based on its current power state.
+        /// </summary>
+        /// <param name="entityId">The resource ID of the VM.</param>
+        protected override void RunCommand(String entityId)
         {
             var states = this.GetStates();
-            var state = states[entity_id];
-            var subsID = states[entity_id].SubscriptionId;
-
-            var i = this.GetPlugin().ConfigInstances.AzureConfigs[subsID];
-
-            var ah = new AzureHelper();
-
-            if (state.PowerState == AzureStateType.PowerOn)
+            if (!states.TryGetValue(entityId, out var state))
             {
-                PluginLog.Info($"Powering off VM: {state.VMName}");
-                this.SetCurrentState(entity_id, (Int32)AzureStateType.Changing);
-                ah.PowerOff(entity_id, i._login, subsID);
-                this.GetPlugin().TriggerTimer(2);
-                return;
-            }
-            else if (state.PowerState == AzureStateType.PowerOff)
-            {
-                PluginLog.Info($"Powering on VM: {state.VMName}");
-                this.SetCurrentState(entity_id, (Int32)AzureStateType.Changing);
-                ah.PowerOn(entity_id, i._login, subsID);
-                
-                this.GetPlugin().TriggerTimer(2);
-                return;
-
-            }
-            else if (state.PowerState == AzureStateType.Changing)
-            {
-                PluginLog.Info($"The VM is in an unexpected state: No action taken.");
+                PluginLog.Error($"[AzureVmAction.RunCommand] State not found for entity: {entityId}");
                 return;
             }
 
-
-
-            //var ah = new AzureHelper();
-            //// Authenticate using service principal credentials
-            //var currentPowerState = ah.RetrieveVmPowerState(vmId);
-
-            //if (currentPowerState == 0)
-            //{
-            //    ah.PowerOn(vmId);
-            //    this.SetCurrentState(vmId, 1);
-            //}
-            //else if (currentPowerState == 1)
-            //{
-            //    ah.PowerOff(vmId);
-            //    this.SetCurrentState(vmId, 0);
-            //}
-            //else
-            //{
-            PluginLog.Info($"The VM is in an unexpected state: No action taken.");
-            //}
-            //return;
-        }
-
-        protected override String GetCommandDisplayName(String entity_id, Int32 deviceState, PluginImageSize imageSize)
-        {
-            if (entity_id.IsNullOrEmpty())
-            { return base.GetCommandDisplayName(entity_id, deviceState, imageSize); }
-
-            var states = this.GetStates();
-
-            var FriendlyName = states[entity_id].VMName;
-            var State = states[entity_id].PowerState;
-
-            switch (deviceState)
+            var subscriptionId = state.SubscriptionId;
+            var plugin = this.GetPlugin();
+            if (plugin?.ConfigInstances?.AzureConfigs == null)
             {
-                case 0:
-                    return $"{FriendlyName}\nNot Found";
-                case 1:
-                    return $"{FriendlyName}\nOff";
-                case 2:
-                    return $"{FriendlyName}\nOn";
-                case 3:
-                    return $"{FriendlyName}\nChanging";
+                PluginLog.Error("[AzureVmAction.RunCommand] AzureConfigs not available.");
+                return;
+            }
 
+            if (!plugin.ConfigInstances.AzureConfigs.TryGetValue(subscriptionId, out var config))
+            {
+                PluginLog.Error($"[AzureVmAction.RunCommand] Config not found for subscription: {subscriptionId}");
+                return;
+            }
+
+            var azureHelper = new AzureHelper();
+
+            switch (state.PowerState)
+            {
+                case AzureStateType.PowerOn:
+                    this.HandleVmStateChange(entityId, state, azureHelper.PowerOff, config._login, subscriptionId, "Powering off");
+                    break;
+                case AzureStateType.PowerOff:
+                    this.HandleVmStateChange(entityId, state, azureHelper.PowerOn, config._login, subscriptionId, "Powering on");
+                    break;
+                case AzureStateType.Changing:
+                    PluginLog.Info($"[AzureVmAction.RunCommand] VM '{state.VMName}' is already changing state. No action taken.");
+                    break;
                 default:
+                    PluginLog.Info($"[AzureVmAction.RunCommand] VM '{state.VMName}' is in an unexpected state. No action taken.");
                     break;
             }
-
-            PluginLog.Info($"{FriendlyName} Status display name updated to: {deviceState}");
-
-            return $"{FriendlyName}\nxxx";
         }
 
+        /// <summary>
+        /// Handles the VM state change operation and triggers a status update.
+        /// </summary>
+        private void HandleVmStateChange(
+            String entityId,
+            AzureState state,
+            Action<String, ServiceClientCredentials, String> vmAction,
+            ServiceClientCredentials login,
+            String subscriptionId,
+            String actionDescription)
+        {
+            PluginLog.Info($"[AzureVmAction] {actionDescription} VM: {state.VMName}");
+            this.SetCurrentState(entityId, (Int32)AzureStateType.Changing);
+            vmAction(entityId, login, subscriptionId);
+            this.GetPlugin().TriggerTimer(2);
+        }
 
+        /// <summary>
+        /// Gets the display name for the command, reflecting the VM's friendly name and current state.
+        /// </summary>
+        /// <param name="entityId">The resource ID of the VM.</param>
+        /// <param name="deviceState">The current state index.</param>
+        /// <param name="imageSize">The size of the plugin image.</param>
+        /// <returns>A string to display on the device.</returns>
+        protected override String GetCommandDisplayName(String entityId, Int32 deviceState, PluginImageSize imageSize)
+        {
+            if (String.IsNullOrEmpty(entityId))
+            {
+                return base.GetCommandDisplayName(entityId, deviceState, imageSize);
+            }
+
+            var states = this.GetStates();
+            if (!states.TryGetValue(entityId, out var state))
+            {
+                return $"{entityId}\nNot Found";
+            }
+
+            var friendlyName = state.VMName;
+
+            return deviceState switch
+            {
+                0 => $"{friendlyName}\nNot Found",
+                1 => $"{friendlyName}\nOff",
+                2 => $"{friendlyName}\nOn",
+                3 => $"{friendlyName}\nChanging",
+                _ => $"{friendlyName}\nUnknown"
+            };
+        }
     }
 
 }

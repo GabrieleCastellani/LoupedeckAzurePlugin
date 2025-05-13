@@ -1,79 +1,74 @@
 ﻿namespace Loupedeck.LoupedeckAzurePlugin.Helpers
 {
     using System;
-    using System.Collections.Generic;
     using System.Linq;
-    using System.Text;
-    using System.Threading.Tasks;
     using Microsoft.Rest.Azure.Authentication;
     using Microsoft.Rest;
     using Microsoft.Azure.Management.Compute;
     using Microsoft.Azure.Management.Compute.Models;
     using Loupedeck.LoupedeckAzurePlugin.Events;
 
+
+
     internal class AzureHelper
     {
 
-        public ComputeManagementClient getCompute(ServiceClientCredentials login, String subcription)
+        public ComputeManagementClient GetCompute(ServiceClientCredentials login, String subscription)
         {
             return new ComputeManagementClient(login)
             {
-                SubscriptionId = subcription
+                SubscriptionId = subscription
             };
         }
-        public Microsoft.Rest.Azure.IPage<Microsoft.Azure.Management.Compute.Models.VirtualMachine> listVMs(ServiceClientCredentials login, String subcription)
+        public Microsoft.Rest.Azure.IPage<VirtualMachine> ListVMs(ServiceClientCredentials login, String subscription)
         {
-            var computeClient = this.getCompute( login, subcription);
-            var x= computeClient.VirtualMachines.ListAllAsync().Result;
+            var computeClient = this.GetCompute(login, subscription);
+            var x = computeClient.VirtualMachines.ListAllAsync().Result;
             return x;
-            
-        }
-        public void PowerOn(String vmId, ServiceClientCredentials login, String subcription)
-        {
-            var computeClient = this.getCompute(login, subcription);
-            ExtractResourceGroupAndVmName(vmId, out var resourceGroupName, out var vmName);
-
-            computeClient.VirtualMachines.StartAsync(resourceGroupName, vmName).Wait();
-
 
         }
-        public void PowerOff(String vmId, ServiceClientCredentials login, String subcription)
+        public void PowerOn(String vmId, ServiceClientCredentials login, String subscription)
         {
-            var computeClient = this.getCompute(login, subcription);
-            ExtractResourceGroupAndVmName(vmId, out var resourceGroupName, out var vmName);
+            var computeClient = this.GetCompute(login, subscription);
+            this.ExtractResourceGroupAndVmName(vmId, out var resourceGroupName, out var vmName);
 
-            computeClient.VirtualMachines.Deallocate(resourceGroupName, vmName);
+            computeClient.VirtualMachines.BeginStart(resourceGroupName, vmName);
+
 
         }
-        public AzureStateType RetrieveVmPowerState(String vmId, ServiceClientCredentials login, String subcription)
+        public void PowerOff(String vmId, ServiceClientCredentials login, String subscription)
         {
-            var instanceView = this.GetVmInstanceView(vmId, login, subcription);
+            var computeClient = this.GetCompute(login, subscription);
+            this.ExtractResourceGroupAndVmName(vmId, out var resourceGroupName, out var vmName);
+
+            computeClient.VirtualMachines.BeginDeallocate(resourceGroupName, vmName);
+
+        }
+        public AzureStateType RetrieveVmPowerState(String vmId, ServiceClientCredentials login, String subscription)
+        {
+            var instanceView = this.GetVmInstanceView(vmId, login, subscription);
             var state = instanceView.Statuses.FirstOrDefault(status =>
                 status.Code.StartsWith("PowerState/", StringComparison.OrdinalIgnoreCase));
             // Strip the "PowerState/" prefix from the state code
-
+            if (state == null)
+            {
+                return AzureStateType.NotFound;
+            }
             var txtstate = state.Code.Substring("PowerState/".Length);
 
 
-            if (txtstate == "running")
-            {
-                return AzureStateType.PowerOn;
-            }
-            else
-            {
-                return txtstate == "deallocated" ? AzureStateType.PowerOff : AzureStateType.Changing;
-            }
+            return txtstate == "running" ? AzureStateType.PowerOn : txtstate == "deallocated" ? AzureStateType.PowerOff : AzureStateType.Changing;
 
         }
 
-        private VirtualMachineInstanceView GetVmInstanceView(String vmId, ServiceClientCredentials login, String subcription)
+        private VirtualMachineInstanceView GetVmInstanceView(String vmId, ServiceClientCredentials login, String subscription)
         {
-            ComputeManagementClient computeClient = this.getCompute(login, subcription);
+            ComputeManagementClient computeClient = this.GetCompute(login, subscription);
             var instanceView = this.FetchVmInstanceView(vmId, computeClient);
             return instanceView;
         }
 
-        private  VirtualMachineInstanceView FetchVmInstanceView(String vmId, ComputeManagementClient computeClient)
+        private VirtualMachineInstanceView FetchVmInstanceView(String vmId, ComputeManagementClient computeClient)
         {
 
             this.ExtractResourceGroupAndVmName(vmId, out var resourceGroupName, out var vmName);
@@ -84,7 +79,7 @@
 
         public void ExtractResourceGroupAndVmName(String vmId, out String resourceGroupName, out String vmName)
         {
-            String[] parts = vmId.Split(new char[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+            var parts = vmId.Split(new Char[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length < 8)
             {
                 throw new ArgumentException("The provided VM ID format is not valid.");

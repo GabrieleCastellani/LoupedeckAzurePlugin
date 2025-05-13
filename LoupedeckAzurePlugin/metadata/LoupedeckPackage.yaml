@@ -6,13 +6,13 @@
 type: plugin4
 
 # Name that identifies the plugin.
-name: LoupedeckAzure
+name: Loupedeck Azure
 
 # Plugin name that is shown to the user.
 displayName: Azure
 
 # Short description of the plugin.
-description: Add a short description of the plugin here.
+description: This plugin consent to display, turn on, turn off a virtual machine in Azure
 
 # Name of the plugin library file.
 pluginFileName: LoupedeckAzurePlugin.dll
